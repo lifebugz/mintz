@@ -197,6 +197,18 @@ Expected: working dir is `/Users/haim/projects/experiments/tsref`; git log shows
 
 [install]
 saveTextLockfile = true
+
+# Coverage runs on every `bun test`. CI tightens the threshold further
+# and fails the build on regression (see .github/workflows/ci.yml).
+[test]
+coverage = false           # opt-in via --coverage; keeps default `bun test` fast
+coverageThreshold = { line = 0.90, function = 0.90, statement = 0.90 }
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = [
+  "test/fixtures/**",
+  "examples/**",
+  "dist/**",
+]
 ```
 
 - [ ] **Step 4: Write `.gitignore`**
@@ -3811,9 +3823,22 @@ jobs:
       - run: bun add -D typescript@${{ matrix.typescript }}
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun test
+      - run: bun test --coverage
       - run: bun run test:types
       - run: bun run build
+
+  coverage-gate:
+    name: Coverage gate (Ubuntu · TS latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      # The coverageThreshold in bunfig.toml enforces the bar; this job
+      # just runs it once on a single cell to fail fast for coverage drops.
+      - run: bun test --coverage
 ```
 
 - [ ] **Step 2: Commit**
