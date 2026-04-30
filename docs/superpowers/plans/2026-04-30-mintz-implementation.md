@@ -265,13 +265,17 @@ git commit -m "chore: initialize package and dependencies"
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
     "noEmit": true
   },
   "include": ["src/**/*", "test/**/*", "tsup.config.ts"],
   "exclude": ["node_modules", "dist", "test/fixtures/**"]
 }
 ```
+
+> Note: `rootDir` is intentionally absent. With `noEmit: true`, tsc only
+> typechecks; `rootDir` would prevent including `tsup.config.ts` (which
+> lives at the repo root, not under `src/`). tsup's own emit paths are
+> set in `tsup.config.ts` and don't depend on tsc's `rootDir`.
 
 - [ ] **Step 2: Write `tsup.config.ts`**
 
