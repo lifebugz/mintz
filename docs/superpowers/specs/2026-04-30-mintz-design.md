@@ -86,10 +86,25 @@ integration and a CLI that works under any toolchain.
   `keys<T>()`, `values<T>()` — locked out for v1. The single-primitive
   philosophy is part of the value proposition; users compose with TypeScript's
   existing operators.
-- Bun-macro-based API (`with { type: "macro" }`) — structurally impossible:
-  Bun macros run after type erasure and cannot see type parameters.
+- Bun-macro-based API (`with { type: "macro" }`) — incompatible with Bun's
+  current macro architecture, which receives JS values after TypeScript type
+  erasure. Reconsider only if Bun's macro design ever evolves.
 - Browser/Deno engine — the engine runs on Node and Bun only. The runtime
   stub is plain ESM and works anywhere.
+- Persistent on-disk cache — the engine maintains an in-memory result cache
+  (§10.2) but does not write a cache file to disk. Defer to v2 if cold-start
+  perf becomes a problem.
+- Sourcemap preservation as a guaranteed feature — v1 is best-effort. The
+  build mode aims to preserve call-site positions in emitted sourcemaps but
+  does not promise byte-identical mappings; users debugging into the
+  inlined array literal may land slightly off the original `mint<T>()` line.
+- Mutation of the user's tsconfig.json — the engine reads tsconfig settings
+  (paths, baseUrl, lib, target, etc.) but never writes to it. Users wanting
+  path aliases must configure them in tsconfig themselves.
+- Cross-file partial-failure transactionality — the CLI processes files
+  best-effort: when one file fails to resolve, the CLI emits its diagnostic
+  and continues processing the rest, then exits non-zero with a summary.
+  No "all or nothing" rewrite mode in v1.
 
 ---
 
@@ -162,7 +177,7 @@ dependency only. Production code never imports it.
     "./bun": { "types": "./dist/bun/index.d.ts", "default": "./dist/bun/index.js" }
   },
   "bin": { "mintz": "./dist/cli/index.js" },
-  "peerDependencies": { "typescript": ">=5.0" },
+  "peerDependencies": { "typescript": ">=5.4" },
   "dependencies":     { "ts-morph": "^28.0.0" }
 }
 ```
@@ -179,7 +194,7 @@ production install footprint is tiny.
 
 ```ts
 // src/runtime.ts
-export type Lit = string | number | boolean | bigint | null;
+export type Lit = string | number | boolean | bigint | null | undefined;
 
 export default function mint<T extends Lit>(
   values?: readonly T[],
@@ -190,7 +205,7 @@ Implementation:
 
 ```ts
 function mint<T extends Lit>(values?: readonly T[]): readonly T[] {
-  if (values !== undefined) return values;
+  if (arguments.length > 0) return values as readonly T[];
   throw new MintzNotTransformedError();
 }
 ```
@@ -198,6 +213,28 @@ function mint<T extends Lit>(values?: readonly T[]): readonly T[] {
 That is the entire runtime. The constraint `T extends Lit` keeps the most
 common authoring mistakes inside TypeScript's normal diagnostic flow; the
 optional `values` argument makes the codegen'd form valid runtime code.
+
+`undefined` is included in `Lit` because `'a' | undefined` is a normal TS
+shape (e.g. an optional discriminator). The engine emits `undefined` as the
+JavaScript identifier `undefined`. Callers who don't want it in the array
+should narrow `T` with `Exclude<T, undefined>` or `NonNullable<T>`.
+
+**`arguments.length > 0` instead of `values !== undefined`.** The runtime
+needs to distinguish "not invoked with the values argument" (untransformed)
+from "invoked with values that happen to include `undefined`". Checking
+`arguments.length` is the only way to tell those apart at runtime.
+
+**Default vs named export.** `mint` is exported as the default export so
+that consumers can rename it freely on import (`import m from "mintz"`,
+`import literals from "mintz"`, etc.). The named export `mint` is also
+provided for ergonomics and so consumers using `verbatimModuleSyntax` aren't
+forced through the default-import path. Both refer to the same function.
+
+```ts
+// Both supported
+import mint from "mintz";
+import { mint } from "mintz";
+```
 
 ### 4.2 Three forms in the call lifecycle
 
@@ -247,7 +284,11 @@ Transitions:
 
 ### 4.4 `MintzNotTransformedError`
 
-Constructed by walking `Error.captureStackTrace` to extract the call site:
+Best-effort call-site extraction via `Error.captureStackTrace` when available
+(V8: Node, Bun, Chrome, Edge). On engines without it (JavaScriptCore in
+Safari, SpiderMonkey in Firefox), the call-site line is omitted; the rest of
+the message is unchanged and remains useful. The runtime never throws from
+the stack-trace probe itself.
 
 ```
 MintzNotTransformedError:
@@ -275,7 +316,8 @@ MintzNotTransformedError:
         from types.
 
   See https://github.com/<user>/mintz#setup
-  Call site: src/events.ts:14:18
+  Call site: src/events.ts:14:18    (omitted on engines without
+                                     Error.captureStackTrace)
 ```
 
 ### 4.5 Generic constraint: what TypeScript catches and what the build catches
@@ -306,8 +348,41 @@ What the build / CLI catches (with helpful diagnostics, not at type-check):
 mint<string>();         // ⚠ accepted by TS; build error: "T is the open type 'string'"
 mint<'a' | string>();   // ⚠ same — `string` widens the union
 mint<number>();         // ⚠ same for any open primitive
+mint<any>();            // ⚠ same — open type
+mint<unknown>();        // ⚠ same — open type
 mint<never>();          // ⚠ empty union — "did you mean `[] as const`?"
 ```
+
+#### Why not a stricter type-level constraint?
+
+A literal-only constraint can be expressed at the type level:
+
+```ts
+type IsLit<T> =
+  T extends string  ? string  extends T ? false : true
+: T extends number  ? number  extends T ? false : true
+: T extends boolean ? boolean extends T ? false : true
+: T extends bigint  ? bigint  extends T ? false : true
+: T extends null | undefined ? true : false;
+
+type AllLit<T> = T extends infer U ? IsLit<U> : never;
+
+function mint<T extends Lit>(
+  values?: AllLit<T> extends true ? readonly T[] : never,
+): AllLit<T> extends true ? readonly T[] : never;
+```
+
+This compiles, and `mint<string>()` does end up returning `never`. But the
+TypeScript error message a user sees on the wrong call is something like
+`Argument of type 'undefined' is not assignable to parameter of type 'never'`,
+which is opaque and unhelpful. The build's structured diagnostic
+("T contains the open type `string`; narrow it with…") is materially better
+UX than fighting through generic-mismatch chains.
+
+The simpler `T extends Lit` constraint catches obvious shape errors at the
+call site (objects, arrays, classes) and lets the build handle subtler open-
+type cases with a clear message. This split matches typia's design choice
+for the same reason.
 
 ### 4.6 What `T` can be
 
@@ -334,28 +409,125 @@ mint<Exclude<Color, 'deprecated'>>();
 // Template literal types (must resolve to a finite domain)
 mint<`evt.${'a' | 'b'}`>();   // → ['evt.a', 'evt.b']
 
-// Native enum
+// Native enum (numeric)
 enum Direction { North, South, East, West }
 mint<Direction>();             // → [0, 1, 2, 3]
 mint<keyof typeof Direction>();// → ['East', 'North', 'South', 'West']
+
+// Native enum (string)
+enum Color { Red = 'red', Blue = 'blue', Green = 'green' }
+mint<Color>();                 // → ['blue', 'green', 'red']
+mint<keyof typeof Color>();    // → ['Blue', 'Green', 'Red']
 ```
+
+#### The most common mistake: passing the union of objects directly
+
+The pedagogically important case for wire-protocol authors is the difference
+between passing the discriminated union itself versus passing the
+indexed-access form of its discriminator:
+
+```ts
+type ClientToServerEvent =
+  | { kind: 'lobby.reaction'; payload: ReactionPayload }
+  | { kind: 'system.ping' };
+
+// ❌ Wrong — passes the *object union*, not a literal union.
+mint<ClientToServerEvent>();
+// Build error:
+//   T resolved to: { kind: 'lobby.reaction'; payload: ... }
+//                | { kind: 'system.ping' }
+//   T contains object types, which cannot be enumerated.
+//   To enumerate the discriminator, use indexed access:
+//     mint<ClientToServerEvent['kind']>()
+
+// ✅ Right — indexed access pulls the discriminator union out.
+mint<ClientToServerEvent['kind']>();
+// → ['lobby.reaction', 'system.ping']
+```
+
+This is the most pedagogically valuable example because users coming from
+runtime-data libraries (Zod, Yup, io-ts) often expect to "describe the whole
+shape" — but `mint<T>` works only on the *literal-union* part of any shape,
+and indexed-access is how you extract that part.
 
 ### 4.7 Determinism and emission ordering
 
 When the engine emits an array, it sorts members deterministically so that
 repeated runs produce byte-identical output:
 
-- **Strings:** lexicographic ASCII sort, ascending.
-- **Numbers and bigints:** numeric ascending.
+- **Strings:** UTF-16 code-unit order, ascending. This matches JavaScript's
+  default `<` operator and `Array.prototype.sort()` with no comparator. ASCII
+  strings sort intuitively; non-ASCII strings sort by their UTF-16 code-unit
+  values (e.g., `'café'` vs `'cafe'`). We deliberately do **not** use
+  `localeCompare`, because locale-dependent collation breaks determinism.
+- **Numbers and bigints:** numeric ascending. Negative numbers come first
+  (`-1, 0, 1`).
 - **Booleans:** `false` before `true`.
-- **null:** always last if present.
+- **null:** sorted last within its kind group.
+- **undefined:** sorted last within its kind group; appears after `null` if
+  both are present.
 - **Mixed kinds:** group by kind in the order
-  `string, number, bigint, boolean, null`; sort within each group.
+  `string, number, bigint, boolean, null, undefined`; sort within each group.
 
 Therefore `mint<'b' | 'a' | 1 | true>()` emits
 `['a', 'b', 1, true] as const` on every run, every machine, regardless of the
 order TypeScript happens to use internally. CI's `--check` mode can compare
 bytes without false positives.
+
+### 4.8 Drift in codegen mode
+
+This is the central hazard of codegen mode and deserves prominent treatment
+in the README and CI guidance.
+
+**The problem.** In codegen mode, `mint<T>(values)` carries a runtime array
+that was correct *at the time `npx mintz` last ran*. If the user adds a
+member to `T` and forgets to re-run `mintz`, the runtime array silently
+drifts behind the type. TypeScript does **not** catch this:
+
+```ts
+// User wrote, codegen ran:
+type Status = 'active' | 'pending';
+const statuses = mint<Status>(['active', 'pending']);
+
+// User adds 'archived' to the union but forgets to re-run codegen:
+type Status = 'active' | 'pending' | 'archived';
+const statuses = mint<Status>(['active', 'pending']);
+// ^ TS is silent: ['active','pending'] is still a valid `Status[]`.
+// ^ Runtime: missing 'archived' from the array. Bug ships.
+```
+
+The asymmetry is structural: the type signature
+`mint<T>(values?: readonly T[])` is contravariant in `T` for the values
+argument's element type. A *narrower* values array (fewer elements) is
+always assignable to a *wider* `T`. So adding members to `T` widens it, and
+the existing values array remains type-valid.
+
+**The fix.** Codegen mode users should run `mintz --check` in CI. The
+`--check` mode re-resolves `T` for every call site and compares against the
+embedded values array; any drift exits non-zero with a diff:
+
+```
+$ mintz --check
+ERROR mintz: array out of sync with type at src/events.ts:42:14
+
+  const statuses = mint<Status>(['active', 'pending']);
+
+  Type Status currently resolves to: 'active' | 'pending' | 'archived'
+  Embedded values are missing:        'archived'
+
+  Re-run `mintz` to update.
+```
+
+In build/preload mode (Bun plugin), drift is **structurally impossible**:
+the plugin re-resolves `T` on every load and inlines the fresh array,
+ignoring whatever the user's source happens to contain in the `values`
+position. Users on Bun therefore get drift-resistance for free; users on
+codegen-only toolchains must wire `mintz --check` into CI.
+
+**The README must surface this.** Drift detection is one of mintz's
+distinctive strengths over manual `as const` arrays *and* over transformer-
+only tools (which inline at every build and so have no analogous risk to
+detect against). See §11.7 for how this lands in the comparison table.
 
 ---
 
@@ -382,29 +554,55 @@ export default function mintzPlugin(opts: MintzPluginOptions = {}): BunPlugin {
   return {
     name: "mintz",
     setup(build) {
-      const filter = opts.include ?? /\.tsx?$/;
+      // Default filter covers .ts, .tsx, .mts, .cts, and .mtsx/.ctsx.
+      const filter = opts.include ?? /\.[mc]?tsx?$/;
       build.onLoad({ filter, namespace: "file" }, async ({ path }) => {
         const source = await Bun.file(path).text();
         // Fast-skip: avoid ts-morph for files that don't use mintz.
         if (!source.includes("mintz")) return;
         const project = getOrCreateProject(opts.tsconfig, path);
         const result = transform({ source, filename: path, project });
-        if (!result.modified && result.diagnostics.length === 0) return;
-        if (result.diagnostics.length) {
-          for (const d of result.diagnostics) {
-            // Bun logs are reported in build output and surfaced by `bun run`.
-            build.config.logs?.push(d);
+        if (result.diagnostics.some(d => d.severity === "error")) {
+          // Bun's plugin API has no documented diagnostic-push surface for
+          // onLoad. Fail the build by throwing; the formatted message lands
+          // in the user's build output (and result.logs after `Bun.build`).
+          throw new Error(formatDiagnostics(result.diagnostics, path));
+        }
+        for (const d of result.diagnostics) {
+          if (d.severity === "warning") {
+            console.warn(formatOneDiagnostic(d, path));
           }
         }
+        if (!result.modified) return;
         return {
           contents: result.code,
-          loader: path.endsWith(".tsx") ? "tsx" : "ts",
+          loader: pickLoader(path),
         };
       });
     },
   };
 }
+
+// Loader selection — Bun supports "ts" and "tsx" as plugin loader values.
+// Files ending .mts / .cts go through "ts"; .mtsx / .ctsx through "tsx".
+function pickLoader(path: string): "ts" | "tsx" {
+  return /tsx$/i.test(path) ? "tsx" : "ts";
+}
 ```
+
+#### Plugin behavior on already-codegen'd input (state 2)
+
+When the plugin encounters `mint<T>([…])` (state 2), it ignores the embedded
+array and re-resolves `T` from the type checker, then inlines the fresh
+array. Reasons:
+
+- It eliminates drift between the embedded array and the current type. Build
+  mode is then drift-free without needing a separate check step.
+- The cost is the same: ts-morph already had to run on this file because the
+  fast-skip didn't match.
+- Codegen mode users running `mintz --check` in CI is still the source of
+  truth for committed-source drift detection (§4.8) — the plugin's
+  re-resolution helps build correctness but does not replace the CI gate.
 
 ### 5.2 Wiring (build mode)
 
@@ -492,11 +690,27 @@ Examples:
 - Built with [`citty`](https://github.com/unjs/citty) (lightweight, ESM,
   Bun-friendly).
 - Shebang `#!/usr/bin/env node` so it works under both Node and Bun.
-- Writes are atomic: write to temp file in same directory then rename.
+- Writes are atomic: write to temp file in same directory then rename. On
+  Windows, `fs.rename` over an existing file may throw `EPERM`; the
+  implementation falls back to read-write-with-fsync if rename fails. Tested
+  in the Windows CI cell (§9.5).
 - `--watch` uses `chokidar` or Node's native `fs.watch` (decision deferred to
   implementation; both work).
 - `--json` outputs newline-delimited JSON `{ file, line, col, severity, code,
   message }` for editor integration.
+
+#### Per-file failure behavior
+
+If a file fails to resolve (e.g. a `mint<T>()` call has unresolvable `T`),
+the CLI:
+
+1. Emits the diagnostic to stderr (or stdout `--json`).
+2. Skips writing that file but **continues processing the remaining files**.
+3. Exits non-zero at the end with a summary count of failures.
+
+This is best-effort partial-rewrite. Users who want all-or-nothing semantics
+should run `mintz --check` first, treat any non-zero exit as failure, then
+run `mintz` only when check passes.
 
 ### 6.3 Idempotency
 
@@ -507,7 +721,7 @@ same array (modulo deterministic sort), so:
 - Re-running after a type member added/removed: only the affected file
   changes, with a focused diff showing exactly what entered or left the array.
 
-The `Refer<T>(values)` shape is the key: it preserves the type expression
+The `mint<T>(values)` shape is the key: it preserves the type expression
 inside the call so codegen can reread it on every run. Without that, the
 codegen would lose the type information after the first run.
 
@@ -522,21 +736,40 @@ codegen would lose the type information after the first run.
 | `mint<keyof typeof Config>()` | ✅ TS resolves to string union → emit |
 | `mint<Exclude<X, 'deprecated'>>()` | ✅ Conditional resolves → emit |
 | `mint<\`evt.${'a' \| 'b'}\`>()` | ✅ Template-literal expansion → finite → emit |
-| `mint<Direction>()` (numeric enum) | ✅ Numeric union of enum values |
-| `mint<keyof typeof Direction>()` | ✅ String union of enum names |
+| `enum Direction { N, S, E, W }; mint<Direction>()` | ✅ Numeric union → `[0, 1, 2, 3]` |
+| `mint<keyof typeof Direction>()` | ✅ String union of names → `['E','N','S','W']` |
+| `enum Color { Red='red', Blue='blue' }; mint<Color>()` | ✅ String enum → `['blue', 'red']` |
+| `mint<keyof typeof Color>()` (string enum) | ✅ Names → `['Blue', 'Red']` |
+| `const enum X { A = 1 }; mint<X>()` | ⚠ Reject under `isolatedModules: true`; error names the constraint. Allow under `isolatedModules: false` (rare). |
 | `mint<typeof MY_CONST_ARRAY[number]>()` | ✅ Element-type literal union |
+| `mint<keyof { 'has-dash': 1; 'has space': 2 }>()` | ✅ Quoted property names preserved as `['has space', 'has-dash']` |
+| `mint<'a' \| undefined>()` | ✅ Emits `['a', undefined]` (literal `undefined`) |
+| `mint<1n \| 2n \| 100n>()` | ✅ Bigint literals → `[1n, 2n, 100n]` (with `n` suffix) |
+| `mint<-1 \| 0 \| 1>()` | ✅ Numbers sort numerically → `[-1, 0, 1]` |
+| `mint<'café' \| '日本' \| 'apple'>()` | ✅ Non-ASCII literals OK; UTF-16 code-unit sort |
 | `mint<string>()` | ❌ Open type — error with file:line + suggestion to narrow |
+| `mint<number>()`, `mint<boolean>()`, `mint<bigint>()` | ❌ Same — any open primitive |
+| `mint<any>()`, `mint<unknown>()` | ❌ Open type — same error class |
 | `mint<'a' \| string>()` | ❌ Union widens to `string` — same error |
 | `mint<\`${string}_${string}\`>()` | ❌ Infinite template-literal domain |
 | `mint<never>()` | ❌ Empty union — "did you mean `[] as const`?" |
-| `mint<{ a: 1; b: 2 }>()` | ❌ Object type, not a literal — caught at type-check time too |
+| `mint<{ a: 1; b: 2 }>()` | ❌ Object type — caught at type-check time |
+| `mint<{kind:'a'} \| {kind:'b'}>()` | ❌ Object union — error suggesting `mint<U['kind']>()` |
+| `type S = string; mint<S>()` | ❌ Same as `mint<string>()` after alias resolution |
 | `function f<T>() { mint<T>() }` | ❌ Generic parameter unresolved at the call site |
+| Cross-file: `T` defined in another module | ✅ ts-morph project graph resolves transitively |
 | `import { default as m } from "mintz"; m<T>()` | ✅ Resolved by symbol identity |
+| `import m from "mintz"; const M = m; M<T>()` | ⚠ Best-effort — alias-through-variable resolution depends on TS narrowing; documented as a known limitation |
 | `function mint() {} mint<T>()` (local shadow) | ⏭ Skipped — symbol identity differs |
+| Mixed: one aliased import + one direct in same file | ✅ Both resolve via symbol identity |
 | Re-exported `mint` from a barrel | ✅ Symbol identity tracking handles transitive re-exports |
 | Two `mint<>()` calls in one file | ✅ Each processed independently |
 | Identical `mint<T>()` called twice | ✅ Both rewrite identically; deterministic ordering ensures stable diffs |
-| Call inside a JSX attribute | ✅ Supported under `tsx` loader |
+| Call inside a class method body | ✅ All call-site contexts supported |
+| Call inside an object-literal property | ✅ Supported |
+| Call inside an arrow-function body | ✅ Supported |
+| Call inside a JSX attribute | ✅ Supported under `tsx`/`ctsx`/`mtsx` loader |
+| Comment / JSDoc immediately before `mint<T>()` | ✅ Preserved across rewrite (codegen mode); has its own fixture |
 | Call inside `.d.ts` declaration | ❌ Reject — declaration files cannot have runtime expressions |
 
 ### 7.1 Symbol-based call resolution
@@ -565,9 +798,16 @@ these into its `Project` automatically.
 
 | Mode | Channel | Format |
 |---|---|---|
-| Bun plugin | `build.config.logs` (visible in Bun build output and `bun run`) | `<file>:<line>:<col>: error: <reason>` |
-| CLI | stderr; non-zero exit | Same format. `--json` emits structured records. |
+| Bun plugin (errors) | Throw from `onLoad` → fails the build; the message lands in `result.logs` (after `Bun.build`) and stderr (under `bun run`) | `<file>:<line>:<col>: error: <reason>` |
+| Bun plugin (warnings) | `console.warn(...)` — visible in build output but does not fail the build | Same line format, prefixed `warning:` |
+| CLI | stderr; non-zero exit on any error | Same format. `--json` emits structured records (newline-delimited). |
 | Runtime | `throw new MintzNotTransformedError(...)` | Multi-line message naming all setup paths + docs URL |
+
+> **Why throw instead of pushing to a logs array?** Bun's plugin API does
+> not currently expose a documented diagnostic-push surface for `onLoad`
+> callbacks. Throwing is the only fail-the-build mechanism the plugin can
+> rely on. If Bun later adds a structured diagnostics API, mintz can adopt
+> it without breaking the user-facing contract.
 
 ### 8.2 Build-time error format
 
@@ -662,15 +902,23 @@ Hand-rolled or via `tsd`:
 - `mint<'a' | 'b'>()` returns `readonly ('a' | 'b')[]`.
 - The constraint catches the most common literal-violation patterns.
 
-### 9.5 TypeScript-version matrix
+### 9.5 Test matrix
 
 GitHub Actions matrix:
-- TS: `5.0.x`, `5.3.x`, `5.6.x`, latest
-- Runtime: Bun stable, Node 20
+- **TypeScript:** `5.4.x` (floor — earlier minors had template-literal
+  expansion bugs that affect this library), `5.6.x`, `5.8.x`, latest.
+- **Runtime:** Bun stable, Bun canary (informational, not blocking),
+  Node 20 LTS, Node 22 LTS.
+- **OS:** Ubuntu (primary), macOS, Windows (covers atomic-write fallback
+  path in §6.2).
 
 All of layers 1–4 run in every cell. The TS version matrix is non-optional
 because the type checker's behavior subtly evolves between minor versions —
 the same library can produce different arrays under different TS versions.
+
+**Supported TypeScript range** advertised to users: **>= 5.4**. Prior minors
+may work in practice but are not tested or supported. The peer dependency
+in `package.json` will pin `"typescript": ">=5.4"`.
 
 ---
 
@@ -750,16 +998,39 @@ the current `src/` layout maps cleanly to packages.
 
 1. **One-line tagline + one-paragraph value prop.** "Read your TypeScript
    types at runtime. Bun-native. Zero magic at the call site."
-2. **30-second example.** Smallest install + one `mint` call + the array.
-3. **Bun setup** (preload, build) — copy-paste blocks.
-4. **Node setup** (CLI codegen) — copy-paste blocks.
-5. **Comparison table** with typia, deepkit, ts-transformer-enumerate, manual
-   `as const`. Honest about each.
-6. **Recipes** — common patterns (event names, enum values vs names, status
-   codes, permissions, exclusion).
-7. **API reference** — single page; the API is small.
-8. **Edge cases & errors** — link to the design doc.
-9. **Versioning, support matrix, license, contributing.**
+2. **30-second example.** Smallest install + one trivial `mint` call:
+   ```ts
+   import mint from "mintz";
+   const colors = mint<'red' | 'green' | 'blue'>();
+   // → ['blue', 'green', 'red']
+   ```
+   Lead with the trivial form, **not** the wire-protocol form. The
+   wire-protocol pattern is the strongest motivator but it requires the
+   reader to already have a discriminated union — that's a barrier to the
+   30-second comprehension goal.
+3. **The realistic example.** Show the wire-protocol case
+   (`mint<ClientToServerEvent['kind']>()`) as the second example, with the
+   discriminated-union setup. This is what users actually ship.
+4. **Bun setup** — preload first (because `bun run` and `bun test` are the
+   most common dev commands), build second. Copy-paste blocks for both.
+5. **Node setup** (CLI codegen) — copy-paste blocks. Mention `mintz --check`
+   prominently.
+6. **Limitations** (before edge cases). Be upfront:
+   - No resolution of generic parameters at the call site.
+   - TypeScript-version skew — the resolved arrays must be tested across
+     the supported TS range; document the range.
+   - JavaScriptCore (Safari) and SpiderMonkey (Firefox) lack
+     `Error.captureStackTrace`; runtime error messages still useful but
+     omit call-site line.
+   - Drift in codegen mode is real — describe it briefly and link to the
+     full §4.8 in the design doc.
+7. **Comparison table** with manual `as const`, typia, deepkit,
+   ts-transformer-enumerate. Honest about each — see §11.7.
+8. **Recipes** — common patterns (event names, enum values vs names, status
+   codes, permissions, exclusion, drift detection in CI).
+9. **API reference** — single page; the API is small.
+10. **Edge cases & errors** — link to the design doc's §7 and §8.
+11. **Versioning, support matrix, license, contributing.**
 
 ### 11.3 License
 
@@ -768,9 +1039,17 @@ esbuild, biome. Maximum adoption friction-free.
 
 ### 11.4 Versioning
 
-- v0.x while shaping the API. Breaking changes allowed in minors.
-- v1.0 once the API is stable and the CI matrix is green for a release cycle.
-- Semver from v1.
+- v0.x while shaping the API; breaking changes allowed in minors.
+- v1.0 corresponds to the goal set defined in §2 of this design doc, once
+  the API is stable and the CI matrix is green for a release cycle.
+- Strict semver from v1.
+
+> **Note on "v1" usage in this document.** The term "v1" is used in two ways
+> throughout this spec: (a) as the *milestone described by §2 goals* — what
+> we plan to ship — and (b) as the *first stable npm release tagged 1.0.0*.
+> The design's "v1 / v2" scoping (in §2 non-goals, §10 mechanisms, §13
+> future work) refers to (a). Pre-1.0 releases on npm are 0.x and may break
+> APIs as we shape them.
 
 ### 11.5 CI
 
@@ -788,21 +1067,44 @@ GitHub Actions:
 
 ### 11.7 Comparison positioning
 
-The README must address head-on: *"why use mintz instead of typia?"*.
+The README must address head-on: *"why use mintz instead of typia / deepkit
+/ a hand-written `as const` array?"*.
 
-| | mintz | typia | deepkit | ts-transformer-enumerate |
-|---|---|---|---|---|
-| Single primitive (one function) | ✅ `mint<T>()` | ❌ wide API | ❌ framework | ⚠ `enumerate<T>()` for union only |
-| Bun-first | ✅ native plugin | ⚠ via third-party `unplugin-typia/bun` | ⚠ via `@deepkit/bun` | ❌ no Bun support |
-| Codegen mode (no build hook required) | ✅ CLI | ❌ transformer required | ❌ transformer required | ❌ transformer required |
-| Install size | small (build-time only) | ~30 MB | framework size | small but tooling-bound |
-| Runtime overhead | zero (build) / 1 ns (codegen) | zero | minor | zero |
-| Validation included | ❌ (not the goal) | ✅ | ✅ | ❌ |
+| | Manual `as const` | mintz | typia | deepkit | ts-transformer-enumerate |
+|---|---|---|---|---|---|
+| Single primitive (one function) | n/a (you write the array) | ✅ `mint<T>()` | ❌ wide API | ❌ framework | ⚠ `enumerate<T>()` for union only |
+| Stays in sync with the type | ❌ manual | ✅ | ✅ | ✅ | ✅ |
+| **Drift detection in CI** | ❌ | ✅ via `mintz --check` | n/a (always inlined at build) | n/a | n/a |
+| Bun-first | n/a | ✅ native plugin | ⚠ via third-party `unplugin-typia/bun` | ⚠ via `@deepkit/bun` | ❌ no Bun support |
+| Codegen mode (no build hook required) | n/a | ✅ CLI | ❌ transformer required | ❌ transformer required | ❌ transformer required |
+| **Works under vanilla `tsc --build`** | ✅ | ✅ (after `mintz` runs) | ❌ unless `ts-patch` | ❌ unless transformer wired | ❌ unless `ts-patch` |
+| Install size — production runtime | 0 | < 2 KB ¹ | runtime stub | runtime stub | runtime stub |
+| Install size — dev (build) | 0 | ~5–10 MB ² | ~30 MB ³ | framework size | small but tooling-bound |
+| Runtime overhead | 0 | 0 (build) / 1 ns (codegen) | 0 | minor | 0 |
+| Validation included | ❌ | ❌ (not the goal) | ✅ | ✅ | ❌ |
+| Effort to add a new value | manual (two places: type + array) | re-run `mintz` (or zero, in build mode) | zero | zero | zero |
+
+¹ The `mintz` runtime stub is ~30 LOC of pure JS, no transitive deps.
+² Includes `ts-morph` and `typescript` (peer). The CLI and plugin are
+   build-time only and never reach production bundles.
+³ typia includes its full AOT validation toolchain. Production builds drop
+   most of it via tree-shaking; install-time disk usage is the larger figure.
 
 `mintz` deliberately scopes itself smaller than typia. Users who need
-runtime validation should still reach for typia, zod, valibot, or
-ArkType. Users who only need their literal types as runtime arrays get
-a focused tool.
+runtime validation should still reach for typia, zod, valibot, or ArkType.
+Users who only need their literal types as runtime arrays get a focused
+tool — and, if they're on a vanilla `tsc` toolchain, the only option that
+doesn't require `ts-patch` or a transformer plugin.
+
+#### Drift detection: a unique capability worth its own pitch
+
+Of the alternatives, only mintz offers a CI mechanism for catching the
+"forgot to re-run codegen" hazard (§4.8). Build-mode transformers (typia,
+deepkit, ts-transformer-enumerate) sidestep drift by inlining at every build,
+but they require build-tooling buy-in. Manual `as const` arrays simply don't
+have a "real" type to drift against. mintz's combination of *committed
+codegen output* + *CI-time check* is genuinely a unique capability, not
+parity with the field.
 
 ---
 
@@ -810,20 +1112,22 @@ a focused tool.
 
 Items deferred from design to plan / implementation:
 
-- **Sourcemap handling.** When the Bun plugin inlines the array, should the
-  source map preserve the original `mint<T>()` call positions? Likely yes
-  for the build mode (preserves debuggability); codegen mode doesn't need it
-  because the rewrite IS the source. Implementation detail.
+- **Sourcemap handling — exact mechanism.** §2 commits sourcemap preservation
+  to *best-effort* (not a guarantee). The plan must decide between:
+  emitting a synthesized sourcemap that maps the inlined array bytes to the
+  original `mint<T>()` line, vs relying on Bun's built-in sourcemap pipeline
+  with no special handling. Implementation detail; both produce usable
+  debugger experiences in practice.
 - **`mint<T>()` in declaration files.** `.d.ts` cannot contain runtime
   expressions, so this is a hard error — but the engine should detect it
-  early and report cleanly.
-- **`mint<T>()` inside a generic function body.** Reject if `T` is a
-  type parameter (cannot be resolved at the static call site). Question:
-  should we *attempt* resolution after monomorphization at the caller? No —
-  too magical for v1.
+  early and report cleanly. Specific message format TBD.
 - **Handling `as const` arrays inside the user's source as input.**
   E.g., `mint<typeof MY_ARR[number]>()`. Should already work via TS's
-  `[number]` indexing, but worth a fixture.
+  `[number]` indexing, but worth a dedicated fixture to lock the behavior.
+- **Result-cache invalidation key.** §10.2 lists an in-memory result cache
+  keyed on (filename, content hash, mintz version). Open: also include
+  resolved-types-of-imports hash, to invalidate when an upstream type
+  changes? Likely yes for correctness; performance implications TBD.
 
 ---
 
@@ -836,9 +1140,16 @@ Items deferred from design to plan / implementation:
 - **Native `onBeforeParse` Rust plugin** for Bun bundler — order-of-magnitude
   perf for large codebases.
 - **JSR publication** for Deno and broader ecosystem reach.
+- **Persistent on-disk cache** — only if cold-start perf becomes a problem.
 - **Convenience helpers** if real users ask for them: `mintEntries<T>()` for
   `[name, value]` pairs from object types, `mintObject<T>()` for full const
   object snapshotting. Door is open but not assumed.
+- **Resolution after monomorphization.** Today, `mint<T>()` inside a generic
+  function body is rejected because `T` is unresolved at the static call
+  site. A future engine could resolve after the type checker has
+  monomorphized callers, emitting a generic stub that dispatches per-T at
+  runtime. This is significant added complexity for a niche use case;
+  considered, not committed.
 - **Editor extensions** — e.g., a VS Code "show resolved values" hover that
   runs the engine for the type under the cursor.
 
@@ -846,8 +1157,13 @@ Items deferred from design to plan / implementation:
 
 ## 14. Glossary
 
-- **Lit** — the union `string | number | boolean | bigint | null`. Constraint
+- **Lit** — the union
+  `string | number | boolean | bigint | null | undefined`. Constraint
   for `mint<T>`.
+- **Drift (codegen mode)** — the state where the embedded values array in
+  `mint<T>(values)` no longer matches what `T` currently resolves to,
+  typically because the user added a member to the union and forgot to
+  re-run `mintz`. See §4.8.
 - **Authored / codegen'd / inlined** — the three states a `mint<T>()` call
   can be in. See §4.2.
 - **Engine** — the cross-runtime transform function that takes source text
