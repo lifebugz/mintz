@@ -1,0 +1,53 @@
+{
+  "name": "mintz",
+  "version": "0.0.0",
+  "description": "Read your TypeScript types at runtime. Bun-native. Zero magic at the call site.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./bun": {
+      "types": "./dist/bun/index.d.ts",
+      "default": "./dist/bun/index.js"
+    }
+  },
+  "bin": {
+    "mintz": "./dist/cli/index.js"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "workspaces": ["examples/*"],
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.4"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0",
+    "citty": "^0.1.6",
+    "chokidar": "^4.0.0",
+    "fast-glob": "^3.3.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/bun": "latest",
+    "tsd": "^0.31.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "bun test",
+    "test:types": "tsd",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
