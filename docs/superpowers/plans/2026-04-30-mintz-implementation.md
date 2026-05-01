@@ -167,6 +167,7 @@ Expected: working dir is `/Users/haim/projects/experiments/tsref`; git log shows
     "fast-glob": "^3.3.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bun": "latest",
     "eslint": "^10.2.1",
     "eslint-config-prettier": "^10.1.8",
@@ -355,6 +356,7 @@ export default tseslint.config(
       "*.md",
       "bun.lock",
       "coverage/**",
+      "eslint.config.mjs",  // self-exclude — not in tsconfig's project graph
     ],
   },
   js.configs.recommended,
