@@ -5,25 +5,9 @@ import { join } from "node:path";
 
 const CLI = join(import.meta.dir, "..", "..", "src", "cli", "index.ts");
 
-// citty's runMain logs help/version via consola; consola suppresses
-// `consola.log()` when NODE_ENV=test, which `bun test` sets implicitly.
-// Strip it from the spawned-process env so the CLI prints normally.
-function spawnEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
-  const env = { ...process.env, ...extra };
-  delete env.NODE_ENV;
-  return Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined)) as Record<
-    string,
-    string
-  >;
-}
-
 describe("mintz CLI bin", () => {
   test("--help shows usage", async () => {
-    const proc = Bun.spawn(["bun", CLI, "--help"], {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: spawnEnv(),
-    });
+    const proc = Bun.spawn(["bun", CLI, "--help"], { stdout: "pipe", stderr: "pipe" });
     const out = await new Response(proc.stdout).text();
     await proc.exited;
     expect(out).toContain("mintz");
@@ -55,7 +39,7 @@ describe("mintz CLI bin", () => {
       );
       const proc = Bun.spawn(
         ["bun", CLI, "--check", "--silent", "--tsconfig", join(root, "tsconfig.json")],
-        { cwd: root, stdout: "pipe", stderr: "pipe", env: spawnEnv() },
+        { cwd: root, stdout: "pipe", stderr: "pipe" },
       );
       const exitCode = await proc.exited;
       expect(exitCode).not.toBe(0);

@@ -1,72 +1,73 @@
-#!/usr/bin/env node
-import { defineCommand, runMain } from "citty";
+#!/usr/bin/env bun
+import { Crust } from "@crustjs/core";
+import { helpPlugin, versionPlugin } from "@crustjs/plugins";
 
-const main = defineCommand({
-  meta: {
-    name: "mintz",
-    version: "0.0.0",
+const cli = new Crust("mintz")
+  .use(helpPlugin())
+  .use(versionPlugin("0.0.0"))
+  .meta({
     description:
       "Rewrite mint<T>() calls to embed runtime literal arrays from your TypeScript types.",
-  },
-  args: {
-    paths: {
-      type: "positional",
+  })
+  .args([
+    {
+      name: "paths",
+      type: "string",
+      variadic: true,
       description: "Glob patterns of files to process. Default: src/**/*.{ts,tsx,mts,cts}",
-      required: false,
     },
+  ])
+  .flags({
     check: {
       type: "boolean",
-      description: "Read-only; exit non-zero if any file would change.",
       default: false,
+      description: "Read-only; exit non-zero if any file would change.",
     },
     "dry-run": {
       type: "boolean",
-      description: "Print diffs but don't write.",
       default: false,
+      description: "Print diffs but don't write.",
     },
     watch: {
       type: "boolean",
-      description: "Re-run on file changes.",
       default: false,
+      description: "Re-run on file changes.",
     },
     tsconfig: {
       type: "string",
       description: "Path to tsconfig.json (default: walk up from cwd).",
-      required: false,
     },
     json: {
       type: "boolean",
-      description: "Emit diagnostics as newline-delimited JSON.",
       default: false,
+      description: "Emit diagnostics as newline-delimited JSON.",
     },
     silent: {
       type: "boolean",
-      description: "Suppress informational stdout.",
       default: false,
+      description: "Suppress informational stdout.",
     },
-  },
-  async run({ args }) {
-    const paths = args._ ?? [];
+  })
+  .run(async ({ args, flags }) => {
     const { runRewrite } = await import("./rewrite");
     const { runCheck } = await import("./check");
     const { runWatch } = await import("./watch");
 
     const opts = {
-      paths,
-      tsconfig: args.tsconfig,
-      json: args.json,
-      silent: args.silent,
-      dryRun: args["dry-run"],
+      paths: args.paths,
+      json: flags.json,
+      silent: flags.silent,
+      dryRun: flags["dry-run"],
+      ...(flags.tsconfig !== undefined && { tsconfig: flags.tsconfig }),
     };
 
-    if (args.check) {
+    if (flags.check) {
       process.exit(await runCheck(opts));
-    } else if (args.watch) {
+    } else if (flags.watch) {
       process.exit(await runWatch(opts));
     } else {
       process.exit(await runRewrite(opts));
     }
-  },
-});
+  });
 
-void runMain(main);
+await cli.execute();
