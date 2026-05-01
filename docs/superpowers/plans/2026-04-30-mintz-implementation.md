@@ -2617,10 +2617,10 @@ For each error fixture, create:
 | `error/01-open-string` | `import mint from "mintz"; mint<string>();` | `OPEN_TYPE` |
 | `error/02-string-mixed` | `import mint from "mintz"; mint<"a" \| string>();` | `OPEN_TYPE` |
 | `error/03-never` | `import mint from "mintz"; mint<never>();` | `EMPTY_UNION` |
-| `error/04-infinite-template` | `import mint from "mintz"; mint<\`${string}_${string}\`>();` | `OPEN_TYPE` |
+| `error/04-infinite-template` | `import mint from "mintz"; mint<\`${string}_${string}\`>();` | `NON_LITERAL_TYPE` (template-literal-with-open-placeholders is classified as non-literal, not as an open primitive) |
 | `error/05-object-type` | `import mint from "mintz"; mint<{ a: 1 }>();` | `NON_LITERAL_TYPE` |
 | `error/06-object-union` | `import mint from "mintz"; type U = {kind:"a"}\|{kind:"b"}; mint<U>();` | `NON_LITERAL_TYPE` |
-| `error/07-generic-param` | `import mint from "mintz"; export function f<T extends string>() { return mint<T>(); }` | `OPEN_TYPE` |
+| `error/07-generic-param` | `import mint from "mintz"; export function f<T extends string>() { return mint<T>(); }` | `NON_LITERAL_TYPE` (unresolved type parameter is classified as non-literal; the constraint isn't substituted at static analysis time) |
 | `error/08-any` | `import mint from "mintz"; mint<any>();` | `OPEN_TYPE` |
 | `error/09-d-ts-call` | (`input.d.ts`) `import mint from "mintz"; declare const x: ReturnType<typeof mint<"a">>;` | `DECL_FILE` |
 
