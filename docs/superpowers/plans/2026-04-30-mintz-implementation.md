@@ -3699,39 +3699,52 @@ git commit -m "test(cli): bin smoke test for --help and --check"
 
 ## Phase 6 — Type-level tests + example app
 
-### Task 28: Type-level tests with `tsd`
+### Task 28: Type-level tests with `tstyche`
 
 **Files:**
-- Create: `test/types.test-d.ts`
+- Create: `test/types.tst.ts`
+
+> **Note (2026-05-02 swap):** the original plan used `tsd`. We swapped to
+> `tstyche` (matches the project's Bun-native + test-runner-shaped
+> direction). File extension changed from `.test-d.ts` to `.tst.ts` —
+> tstyche's default `testFileMatch` is `**/*.tst.*`. API translation:
+> `expectType<T>(v)` → `expect(v).type.toBe<T>()`,
+> `expectAssignable<T>(v)` → `expect(v).type.toBeAssignableTo<T>()`,
+> `expectError(expr)` → `expect(expr).type.toRaiseError()`.
 
 - [ ] **Step 1: Write the test**
 
 ```ts
-import { expectAssignable, expectError, expectType } from "tsd";
+import { expect, test } from "tstyche";
 import mint from "../src/runtime";
 
-// Returns a readonly array narrowed to the literal union.
-const events = mint<"a" | "b">(["a", "b"]);
-expectType<readonly ("a" | "b")[]>(events);
+test("mint returns the right narrowed array type", () => {
+  // Returns a readonly array narrowed to the literal union.
+  const events = mint<"a" | "b">(["a", "b"]);
+  expect(events).type.toBe<readonly ("a" | "b")[]>();
 
-// Numbers
-const codes = mint<200 | 404>([200, 404]);
-expectType<readonly (200 | 404)[]>(codes);
+  // Numbers
+  const codes = mint<200 | 404>([200, 404]);
+  expect(codes).type.toBe<readonly (200 | 404)[]>();
 
-// Mixed kinds
-const mixed = mint<"a" | 1 | true | null>(["a", 1, true, null]);
-expectAssignable<readonly ("a" | 1 | true | null)[]>(mixed);
+  // Mixed kinds
+  const mixed = mint<"a" | 1 | true | null>(["a", 1, true, null]);
+  expect(mixed).type.toBeAssignableTo<readonly ("a" | 1 | true | null)[]>();
+});
 
-// Object types are rejected by `T extends Lit`.
-expectError(mint<{ a: 1 }>([]));
-expectError(mint<string[]>([]));
-expectError(mint<Date>([]));
+test("mint rejects non-literal type arguments", () => {
+  // Object types are rejected by `T extends Lit`.
+  expect(mint<{ a: 1 }>([])).type.toRaiseError();
+  expect(mint<string[]>([])).type.toRaiseError();
+  expect(mint<Date>([])).type.toRaiseError();
+});
 
-// `any` and `unknown` are NOT caught at type-check time (deferred to build).
-expectAssignable<readonly unknown[]>(mint<any>([]));
+test("any/unknown are NOT caught at type-check time (deferred to build)", () => {
+  expect(mint<any>([])).type.toBeAssignableTo<readonly unknown[]>();
+});
 ```
 
-- [ ] **Step 2: Run tsd**
+- [ ] **Step 2: Run tstyche**
 
 Run: `bun run test:types`
 Expected: PASS — all assertions hold.
@@ -3739,8 +3752,8 @@ Expected: PASS — all assertions hold.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add test/types.test-d.ts
-git commit -m "test(types): tsd assertions for the mint() generic"
+git add test/types.tst.ts
+git commit -m "test(types): tstyche assertions for the mint() generic"
 ```
 
 ---
