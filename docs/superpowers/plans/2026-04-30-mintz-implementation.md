@@ -12,6 +12,45 @@
 
 ---
 
+## Resumption status (as of 2026-05-01)
+
+**Phases 0–4 are complete.** Resume at **Phase 5, Task 22** (CLI skeleton).
+
+| Phase | Status | Tasks | Notes |
+|---|---|---|---|
+| Phase 0 — Project setup | ✅ done | 1, 2, 3 | Toolchain swap from Biome → ESLint v10 + Prettier was applied mid-phase. Plan's Task 1 / Task 3 reflect the final state. |
+| Phase 1 — Runtime stub | ✅ done | 4+5 (combined) | Implementer initially widened return type to `readonly T[] \| undefined`; reverted to spec-correct `readonly T[]` with `values!` non-null assertion. |
+| Phase 2 — Engine core | ✅ done | 6, 7, 8, 9, 10, 11, 12 | 51 unit tests, 512 LOC engine source. |
+| Phase 3 — Engine fixtures | ✅ done | 13, 14, 15, 16, 17, 18, 19 | 27 fixtures (18 success + 9 error). |
+| Phase 4 — Bun plugin | ✅ done | 20, 21 | 2 integration tests via real `Bun.build()`. |
+| Phase 5 — CLI | ⏭ next | 22, 23, 24, 25, 26, 27 | Start here. |
+| Phase 6 — Type tests + example | ⏳ pending | 28, 29 | |
+| Phase 7 — Build, CI, docs | ⏳ pending | 30, 31, 32, 33 | |
+
+**Branch:** `feat/v1`. **Cumulative test count:** 80 passing across 10 files (149 expects). **Latest commit at handoff:** `d5203fd docs(plan): correct Task 21 test pattern`.
+
+### Critical gotchas surfaced during execution (do not relearn these)
+
+1. **Bun plugin error model.** Throws inside `onLoad` cause `Bun.build()` to **reject** with `AggregateError("Bundle failed")`. Errors do **NOT** land in `result.logs` — `result` is never produced, the promise rejects. Tests must use `try { await Bun.build(...) } catch (e)` and inspect `e.errors[].message`. Spec §8.1 and Task 21 in this plan are corrected to match this. `formatDiagnostic` emits human-readable text (`"open type"`), not the machine code (`"OPEN_TYPE"`).
+2. **`build.config.logs.push()` does not exist** as a Bun plugin API — verified empirically. There is no documented diagnostic-push surface for `onLoad`. Throwing is the only fail-the-build mechanism.
+3. **`tsconfig.json` `rootDir` × `include` conflict.** With `noEmit: true`, `rootDir` is redundant and conflicts with including `tsup.config.ts` at the repo root. The plan's tsconfig deliberately omits `rootDir`.
+4. **Diagnostic codes in error fixtures 04 and 07.** The plan originally claimed `OPEN_TYPE` for `\`${string}_${string}\`` and unresolved generic param. Engine actually emits `NON_LITERAL_TYPE` for both — TS classifies `TemplateLiteralType` and `TypeParameterType` as non-literal, not as the open string primitive. Plan rows updated.
+5. **`@typescript-eslint/no-non-null-assertion`** is set to `warn` (not `error`) in `eslint.config.mjs`. Existing `!` assertions in `src/runtime.ts`, `src/engine/index.ts`, and several test files are intentional and should not be removed without thinking through the alternative (`as` casts trip the conflicting `non-nullable-type-assertion-style` rule).
+6. **`@eslint/js` is in devDependencies** — required as a peer for `js.configs.recommended` to import. Not in the original plan; added during the Biome→ESLint swap.
+7. **Three placeholder files** at `src/runtime.ts`, `src/bun/index.ts`, `src/cli/index.ts` had `export {};` content during Phase 0 to keep tsup's three entry points buildable. `src/runtime.ts` and `src/bun/index.ts` are now real; `src/cli/index.ts` is still a placeholder until Task 22.
+8. **Combined dispatches.** Tasks 4+5 (runtime + errors) shipped as one combined dispatch because Task 4's test imports from Task 5's module. Tasks 22+23 (CLI skeleton + file discovery) might similarly be considered for combination — but each later CLI task has its own tests so they can stand alone.
+
+### Resuming with executing-plans skill
+
+In a fresh Claude Code session inside `/Users/haim/projects/experiments/tsref`:
+
+1. The branch is `feat/v1` (already checked out as the current branch on disk).
+2. Invoke `/superpowers:executing-plans` (or paste a prompt that names the skill) and point it at this file: `docs/superpowers/plans/2026-04-30-mintz-implementation.md`. Tell it to **start at Phase 5, Task 22**, and that Phases 0–4 are complete (commits up through `d5203fd`).
+3. Per-task gates remain: every task must end with `bun test` + `bun run lint` + `bun run typecheck` all green, and a commit on `feat/v1`. Tests-must-pass is the gate.
+4. After Phase 5 (Tasks 22–27), pause for user review before Phase 6.
+
+---
+
 ## File Structure
 
 ```
