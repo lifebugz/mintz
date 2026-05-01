@@ -564,8 +564,10 @@ export default function mintzPlugin(opts: MintzPluginOptions = {}): BunPlugin {
         const result = transform({ source, filename: path, project });
         if (result.diagnostics.some(d => d.severity === "error")) {
           // Bun's plugin API has no documented diagnostic-push surface for
-          // onLoad. Fail the build by throwing; the formatted message lands
-          // in the user's build output (and result.logs after `Bun.build`).
+          // onLoad. Throwing causes Bun.build() to reject with an
+          // AggregateError("Bundle failed") whose `.errors[]` contains the
+          // BuildMessage objects carrying our formatted text. Errors do
+          // NOT land in result.logs — see §8.1.
           throw new Error(formatDiagnostics(result.diagnostics, path));
         }
         for (const d of result.diagnostics) {
@@ -798,16 +800,23 @@ these into its `Project` automatically.
 
 | Mode | Channel | Format |
 |---|---|---|
-| Bun plugin (errors) | Throw from `onLoad` → fails the build; the message lands in `result.logs` (after `Bun.build`) and stderr (under `bun run`) | `<file>:<line>:<col>: error: <reason>` |
-| Bun plugin (warnings) | `console.warn(...)` — visible in build output but does not fail the build | Same line format, prefixed `warning:` |
+| Bun plugin (errors) | Throw from `onLoad` → `Bun.build()` rejects with `AggregateError("Bundle failed")`; original `BuildMessage` objects carrying our formatted text are reachable via `caught.errors[]`. Under `bun run`, the error prints to stderr and the runtime exits non-zero. | `ERROR mintz: <reason> at <file>:<line>:<col>` followed by source line, caret, resolved type, and suggestions |
+| Bun plugin (warnings) | `console.warn(...)` — visible in build output but does not fail the build | Same line format, prefixed `WARNING mintz` |
 | CLI | stderr; non-zero exit on any error | Same format. `--json` emits structured records (newline-delimited). |
 | Runtime | `throw new MintzNotTransformedError(...)` | Multi-line message naming all setup paths + docs URL |
 
-> **Why throw instead of pushing to a logs array?** Bun's plugin API does
-> not currently expose a documented diagnostic-push surface for `onLoad`
-> callbacks. Throwing is the only fail-the-build mechanism the plugin can
-> rely on. If Bun later adds a structured diagnostics API, mintz can adopt
-> it without breaking the user-facing contract.
+> **Why throw, and why don't errors land in `result.logs`?** Bun's plugin
+> API does not currently expose a documented diagnostic-push surface for
+> `onLoad`. **Verified empirically**: a thrown error inside `onLoad` causes
+> `Bun.build()` to reject (not resolve) with an `AggregateError("Bundle
+> failed")`. The promise's rejection carries the underlying `BuildMessage`
+> objects in `error.errors[]`; `result.logs` is *not* populated when this
+> path fires (because `result` itself is not produced — the promise rejects
+> before `Bun.build()` returns). Tests therefore assert via
+> `try { await Bun.build(...) } catch (e) { /* inspect e.errors */ }`,
+> not via `result.logs`. If Bun later adds a structured diagnostics API
+> that lets plugins populate `result.logs` without rejecting, mintz can
+> adopt it transparently — the user-facing format stays the same.
 
 ### 8.2 Build-time error format
 
@@ -886,7 +895,9 @@ Adding a new edge case = adding one directory.
 `bun test` spawns `Bun.build({ plugins: [mintz()] })` over fixture entry
 points and asserts:
 - bundle output contains the inlined arrays for success fixtures
-- `result.logs` contains the expected error for error fixtures
+- `Bun.build()` rejects with `AggregateError("Bundle failed")` for error
+  fixtures, with the formatted diagnostic text reachable via
+  `caught.errors.map(e => e.message).join("\n")` (see §8.1).
 
 ### 9.3 CLI integration tests
 
