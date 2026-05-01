@@ -41,16 +41,16 @@
     "@tsconfig/bun": "^1.0.10",
     "@tsconfig/strictest": "^2.0.8",
     "@types/bun": "latest",
+    "bunup": "^0.16.31",
     "eslint": "^10.2.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.3",
     "tsd": "^0.31.0",
-    "tsup": "^8.0.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.59.1"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "bunup",
     "test": "bun test",
     "test:types": "tsd",
     "typecheck": "tsc --noEmit",
