@@ -2792,16 +2792,31 @@ describe("Bun plugin", () => {
       entry,
       ['import mint from "mintz";', "export const x = mint<string>();"].join("\n"),
     );
+    // Bun's plugin error model: a throw inside `onLoad` causes Bun.build()
+    // to REJECT with AggregateError("Bundle failed"). Errors do NOT land
+    // in result.logs (result is never produced — the promise rejects).
+    // Inspect caught.errors[].message for the formatted diagnostic text.
+    // formatDiagnostic emits the human-readable form ("open type") rather
+    // than the machine code ("OPEN_TYPE").
     try {
-      const result = await Bun.build({
-        entrypoints: [entry],
-        outdir: join(dir, "dist"),
-        plugins: [mintzPlugin({ tsconfig: join(dir, "tsconfig.json") })],
-        target: "bun",
-      });
-      expect(result.success).toBe(false);
-      const allLogs = result.logs.map((l) => String(l)).join("\n");
-      expect(allLogs).toContain("OPEN_TYPE");
+      let caught: unknown = null;
+      try {
+        await Bun.build({
+          entrypoints: [entry],
+          outdir: join(dir, "dist"),
+          plugins: [mintzPlugin({ tsconfig: join(dir, "tsconfig.json") })],
+          target: "bun",
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).not.toBeNull();
+      const errs = (caught as AggregateError | (Error & { errors?: unknown[] })).errors;
+      const detail = Array.isArray(errs)
+        ? errs.map((e) => (e instanceof Error ? e.message : String(e))).join("\n")
+        : String(caught);
+      expect(detail).toContain("ERROR mintz");
+      expect(detail).toContain("open type");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
