@@ -6,7 +6,7 @@
 
 **Architecture:** One ts-morph–based transform engine wrapped by three thin shells: a Bun plugin (`mintz/bun`) used in both `Bun.build` and `bunfig.toml` preload, a Node-compatible CLI (`mintz` bin) for codegen, and a 30-LOC runtime stub. Drift detection is a first-class feature via `mintz --check`.
 
-**Tech Stack:** TypeScript 5.4+, ts-morph 28+, Bun 1.x, tsup (build), Biome (lint+format), citty (CLI args), chokidar (`--watch`), tsd (type-level tests), bun test (everything else).
+**Tech Stack:** TypeScript 5.4+, ts-morph 28+, Bun 1.x, tsup (build), ESLint v10 + typescript-eslint v8 (lint, flat config), Prettier (format), citty (CLI args), chokidar (`--watch`), tsd (type-level tests), bun test (everything else).
 
 **Scope discipline:** §2 non-goals from the spec are **hard cuts** for this plan. No unplugin wrapper, no ts-patch transformer, no JSR publishing, no convenience helpers (`mintEntries`/`pluck`/etc.), no native NAPI plugin, no persistent on-disk cache. If a task tempts you to add one of these, stop and confirm with the user.
 
@@ -19,7 +19,9 @@ mintz/                                    # repo root (currently in tsref/ worki
 ├── package.json                          # name "mintz", default + ./bun + bin
 ├── tsconfig.json                         # strict, ESM, 5.4+ target
 ├── tsup.config.ts                        # build config: 3 entries → ESM + .d.ts
-├── biome.json                            # lint + format
+├── eslint.config.mjs                     # flat-config lint
+├── .prettierrc.json                      # format
+├── .prettierignore
 ├── bunfig.toml                           # local dev preload
 ├── .gitignore
 ├── LICENSE                               # MIT
@@ -165,20 +167,23 @@ Expected: working dir is `/Users/haim/projects/experiments/tsref`; git log shows
     "fast-glob": "^3.3.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
     "@types/bun": "latest",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
     "tsd": "^0.31.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.59.1"
   },
   "scripts": {
     "build": "tsup",
     "test": "bun test",
     "test:types": "tsd",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "lint": "eslint . && prettier --check .",
+    "lint:fix": "eslint . --fix && prettier --write .",
+    "format": "prettier --write ."
   },
   "publishConfig": {
     "access": "public"
@@ -320,61 +325,113 @@ git commit -m "chore: add tsconfig and tsup config"
 
 ---
 
-### Task 3: Linting and formatting
+### Task 3: Linting (ESLint v10) and formatting (Prettier)
 
 **Files:**
-- Create: `biome.json`
+- Create: `eslint.config.mjs`
+- Create: `.prettierrc.json`
+- Create: `.prettierignore`
 
-- [ ] **Step 1: Write `biome.json`**
+ESLint and Prettier each handle one concern (lint vs format). Running them
+sequentially in the `lint` script keeps each tool's output focused.
+`eslint-config-prettier` disables ESLint stylistic rules that would conflict
+with Prettier's formatting.
+
+- [ ] **Step 1: Write `eslint.config.mjs`** (flat config; ESLint v9+ default)
+
+```js
+// @ts-check
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+import prettier from "eslint-config-prettier";
+
+export default tseslint.config(
+  {
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "test/fixtures/**",
+      "examples/**",
+      "*.md",
+      "bun.lock",
+      "coverage/**",
+    ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  ...tseslint.configs.stylisticTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/consistent-type-imports": "error",
+      "@typescript-eslint/consistent-type-exports": "error",
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-non-null-assertion": "warn",
+    },
+  },
+  // Must come last to disable conflicting stylistic rules.
+  prettier,
+);
+```
+
+- [ ] **Step 2: Write `.prettierrc.json`**
 
 ```json
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-  "files": {
-    "ignoreUnknown": false,
-    "ignore": ["dist", "node_modules", "test/fixtures/**", "*.md"]
-  },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 100
-  },
-  "organizeImports": { "enabled": true },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true,
-      "suspicious": {
-        "noExplicitAny": "warn"
-      },
-      "style": {
-        "useImportType": "error",
-        "useExportType": "error"
-      }
-    }
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "double",
-      "trailingCommas": "all",
-      "semicolons": "always"
-    }
-  }
+  "semi": true,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "arrowParens": "always",
+  "endOfLine": "lf"
 }
 ```
 
-- [ ] **Step 2: Run lint to verify config is valid**
+- [ ] **Step 3: Write `.prettierignore`**
+
+```
+dist/
+node_modules/
+test/fixtures/
+examples/
+coverage/
+bun.lock
+*.md
+```
+
+- [ ] **Step 4: Run lint to verify config is valid**
 
 Run: `bun run lint`
-Expected: passes on empty src tree (only the placeholder `export {};` exists).
 
-- [ ] **Step 3: Commit**
+Expected: passes on the current file set (the three placeholder
+`export {};` files plus configs). ESLint and Prettier should both report
+zero issues.
+
+If ESLint complains that the project service can't resolve the placeholder
+`src/*.ts` files, that's because they're empty. Add a single noop type
+declaration to each to give ESLint something to bind to:
+
+```ts
+// src/runtime.ts (placeholder)
+export {};
+```
+
+This file content is correct; if ESLint flags it as "no exports", that's
+a false positive on placeholder files — verify by running `bun run lint`
+again and confirming clean exit.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add biome.json
-git commit -m "chore: configure biome for lint and format"
+git add eslint.config.mjs .prettierrc.json .prettierignore
+git commit -m "chore: configure eslint v10 + prettier"
 ```
 
 ---
@@ -4019,7 +4076,7 @@ git clone https://github.com/<user>/mintz
 cd mintz
 bun install
 bun test          # all tests
-bun run lint      # biome
+bun run lint      # eslint + prettier --check
 bun run typecheck # tsc --noEmit
 bun run build     # tsup
 ```
