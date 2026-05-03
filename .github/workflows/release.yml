@@ -22,6 +22,17 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # Diagnostic: confirm OIDC env vars are present in the runner.
+      # Trusted publishing requires ACTIONS_ID_TOKEN_REQUEST_URL and
+      # ACTIONS_ID_TOKEN_REQUEST_TOKEN to be set (auto-injected by GitHub
+      # Actions when `id-token: write` is granted). If either is empty,
+      # the issue is permissions, not npm version.
+      - name: Verify OIDC env (does not print token values)
+        run: |
+          [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo "✓ ACTIONS_ID_TOKEN_REQUEST_URL is set" || echo "✗ ACTIONS_ID_TOKEN_REQUEST_URL is MISSING"
+          [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo "✓ ACTIONS_ID_TOKEN_REQUEST_TOKEN is set" || echo "✗ ACTIONS_ID_TOKEN_REQUEST_TOKEN is MISSING"
+          echo "bunx-resolved npm version: $(bunx npm@latest --version)"
+
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck

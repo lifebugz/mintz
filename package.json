@@ -65,7 +65,7 @@
     "format": "prettier --write .",
     "changeset": "bunx changeset",
     "ci:version": "bunx changeset version",
-    "ci:publish": "bun run build && bunx npm publish --provenance && bunx changeset tag",
+    "ci:publish": "bun run build && bunx npm@latest publish --provenance && bunx changeset tag",
     "ci:canary": "bunx changeset version --snapshot canary && bun run build && bunx npm publish --tag canary --provenance"
   },
   "publishConfig": {

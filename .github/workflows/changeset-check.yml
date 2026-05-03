@@ -7,6 +7,12 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Skip on Version PRs (auto-opened by changesets/action). Those PRs
+    # CONSUME changesets — they don't add them — so `changeset status`
+    # would fail. Version PRs are inherently safe to merge: their only
+    # diff is a version bump + CHANGELOG update derived from already-
+    # reviewed changesets.
+    if: github.head_ref != 'changeset-release/main'
     steps:
       - uses: actions/checkout@v6
         with:
