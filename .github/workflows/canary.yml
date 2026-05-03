@@ -23,9 +23,6 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Configure npm auth
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > "$HOME/.npmrc"
-
       - run: bun install --frozen-lockfile
       - run: bun test
       # `bun run test:types` is intentionally omitted; type-test files
@@ -36,6 +33,4 @@ jobs:
         run: |
           bunx changeset version --snapshot ${{ inputs.tag }}
           bun run build
-          bun publish --tag ${{ inputs.tag }} --tolerate-republish
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+          bunx npm publish --tag ${{ inputs.tag }} --provenance
