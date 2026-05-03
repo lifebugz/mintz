@@ -1,15 +1,15 @@
 # mintz
 
-Read your TypeScript types at runtime. Bun-native. Zero magic at the call site.
+Read TypeScript types at runtime, on Bun.
 
 ## Why it exists
 
-TypeScript types are erased at runtime. There is no native operator to enumerate
-a literal union as a `string[]`. Existing solutions either embed this capability
-inside a much larger framework (typia, deepkit), or require a TypeScript compiler
-transformer that Bun does not natively support (ts-transformer-enumerate via
-ts-patch / ttypescript). `mintz` is the focused library that does only this, with
-first-class Bun integration and a CLI that works under any toolchain.
+TypeScript types are erased at compile time. If you have a literal union
+like `"red" | "green" | "blue"` and you want the values back as an array
+at runtime, there's nothing built in. typia and deepkit can do it, but
+they're full frameworks. `ts-transformer-enumerate` can do it, but it
+needs ts-patch / ttypescript, and Bun doesn't run those. So this is just
+the part you actually wanted.
 
 ## Quick example
 
@@ -20,7 +20,7 @@ const colors = mint<"red" | "green" | "blue">();
 // → ['blue', 'green', 'red']
 ```
 
-The realistic case — enumerating the discriminator of a discriminated union:
+A more useful case: pulling the discriminator out of a discriminated union.
 
 ```ts
 import mint from "mintz";
@@ -35,8 +35,8 @@ const events = mint<ClientToServerEvent["event"]>();
 // → ['lobby.reaction', 'player.typing', 'round.submit_answers', 'system.ping']
 ```
 
-The type already contains the union you want. `mint<T>()` is just the last hop —
-turning it into a runtime array.
+The type already encodes the union. `mint<T>()` just turns it into a runtime
+array.
 
 ## Install
 
@@ -44,13 +44,13 @@ turning it into a runtime array.
 bun add mintz
 ```
 
-Peer dependency: `typescript >= 5.4`.
+You also need `typescript >= 5.4` as a peer dep.
 
 ## Three modes
 
 ### Bun preload (recommended for `bun run` and `bun test`)
 
-Create a preload file and register the plugin:
+Create a preload file that registers the plugin:
 
 ```ts
 // preload.ts
@@ -67,9 +67,9 @@ preload = ["./preload.ts"]
 preload = ["./preload.ts"]
 ```
 
-The plugin resolves `T` on every module load and replaces each `mint<T>()` call
-with an inlined `[...] as const`. No drift is possible — the array is always
-fresh from the type checker.
+On every module load, the plugin re-resolves `T` and rewrites each
+`mint<T>()` to an inline `[...] as const`. The array stays in sync with
+the type, and you don't commit anything generated.
 
 ### Bun build plugin
 
@@ -83,21 +83,20 @@ await Bun.build({
 });
 ```
 
-Same plugin, same behavior. `mint<T>()` collapses to a bare array literal in the
-bundle. Zero runtime cost; the function is never invoked.
+In a build, the call collapses to a literal array. The runtime function
+is never invoked.
 
-### CLI codegen (any toolchain)
+### CLI codegen (anything that isn't Bun)
 
-For projects using `tsc`, `ts-node`, `tsx`, Webpack, or Vite — any toolchain
-that doesn't support Bun plugins:
+If you're on `tsc`, `ts-node`, `tsx`, Webpack, or Vite:
 
 ```sh
-npx mintz            # rewrite all mint<T>() calls in src/**/*.{ts,tsx}
+npx mintz            # rewrite every mint<T>() in src/**/*.{ts,tsx}
 npx mintz --check    # CI: exit non-zero if any file is out of sync
-npx mintz --watch    # re-run on file changes during development
+npx mintz --watch    # re-run on changes during development
 ```
 
-After running `mintz`, each call site becomes:
+After running `mintz`, each call site looks like this:
 
 ```ts
 const events = mint<ClientToServerEvent["event"]>([
@@ -108,14 +107,12 @@ const events = mint<ClientToServerEvent["event"]>([
 ]);
 ```
 
-The values are embedded in source and committed to your repo. Re-running `mintz`
-recomputes them — the call preserves the type expression so codegen can re-read
-it on every run.
+The values get committed to your repo. The type expression stays alongside
+them so the next run can re-read it.
 
-**Important:** in codegen mode, if you add a member to the type and forget to
-re-run `mintz`, the committed array silently drifts behind the type. TypeScript
-does not catch this. Add `mintz --check` to your CI pipeline to catch drift
-before it ships:
+Codegen mode has one real failure mode: you change the type, forget to
+re-run, and the committed array silently drifts. TypeScript won't catch
+this. Wire `mintz --check` into CI:
 
 ```json
 {
@@ -128,8 +125,8 @@ before it ships:
 
 ## What `T` can be
 
-`T` must resolve to a finite union of literal types. TypeScript's existing
-operators do the routing:
+`T` has to resolve to a finite union of literals. Anything TypeScript
+can already compute into one works:
 
 ```ts
 // Direct literal union
@@ -152,39 +149,36 @@ mint<`evt.${"a" | "b"}`>(); // → ['evt.a', 'evt.b']
 mint<Exclude<Color, "deprecated">>();
 ```
 
-Both import styles work:
+Both import shapes work:
 
 ```ts
 import mint from "mintz"; // default
 import { mint } from "mintz"; // named
 ```
 
-**Out of scope for v0.1:** open types (`string`, `number`, `any`, `unknown`),
-unresolved generic parameters at the call site, and types that widen to a
-non-literal union. These produce a build-time error with a suggested fix rather
-than a TypeScript type error. Non-literal types (objects, arrays, classes) are
-caught at type-check time with a normal red squiggle.
+What's out of scope for v0.1: open types (`string`, `number`, `any`,
+`unknown`), generic parameters that aren't resolved at the call site, and
+types that widen to a non-literal union. These produce a build-time error
+with a suggested fix, not a TypeScript type error. Object, array, and class
+types fail at type-check time the normal way (red squiggle).
 
-Output is sorted deterministically on every run — strings by UTF-16 code-unit
-order, numbers numerically, booleans with `false` first — so re-running `mintz`
-produces byte-identical output and git diffs reflect only real type changes.
+Output is sorted on every run: strings by UTF-16 code-unit order, numbers
+numerically, booleans with `false` first. So `mintz` is byte-stable across
+runs and your git diffs only move when the type actually changed.
 
 ## What it is not
 
-`mintz` does not validate runtime data. It has no runtime type guards, no JSON
-schema generation, and no serialization support. For those, reach for zod,
-typia, valibot, or ArkType.
+`mintz` doesn't validate runtime data. No type guards, no JSON schema, no
+serialization. For that, reach for zod, typia, valibot, or ArkType.
 
-It is not a full reflection framework. deepkit and typia provide complete
-type-based runtime systems; `mintz` provides one primitive.
-
-It is not a TypeScript decorator polyfill and has no opinion on decorators.
+It's also not a reflection framework. typia and deepkit provide the full
+type-based runtime; `mintz` does one primitive. And it has no opinion on
+decorators.
 
 ## Status
 
-v0.1.0, pre-1.0. Semver permits breaking changes in 0.x minors while the API
-is being shaped. Feedback and bug reports welcome via
-[GitHub Issues](https://github.com/lifebugz/mintz/issues).
+v0.1.0, pre-1.0. The 0.x minors may break. File issues at
+[GitHub](https://github.com/lifebugz/mintz/issues).
 
 ## License
 
