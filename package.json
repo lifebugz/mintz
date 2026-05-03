@@ -1,0 +1,66 @@
+{
+  "name": "mintz",
+  "version": "0.0.0",
+  "description": "Read your TypeScript types at runtime. Bun-native. Zero magic at the call site.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/runtime.d.ts",
+      "default": "./dist/runtime.js"
+    },
+    "./bun": {
+      "types": "./dist/bun/index.d.ts",
+      "default": "./dist/bun/index.js"
+    }
+  },
+  "bin": {
+    "mintz": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.4"
+  },
+  "dependencies": {
+    "@crustjs/core": "^0.0.16",
+    "@crustjs/plugins": "^0.0.22",
+    "ts-morph": "^28.0.0"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@eslint/js": "^10.0.1",
+    "@tsconfig/bun": "^1.0.10",
+    "@tsconfig/strictest": "^2.0.8",
+    "@types/bun": "latest",
+    "bunup": "^0.16.31",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
+    "tstyche": "^7.1.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.59.1"
+  },
+  "scripts": {
+    "build": "bunup",
+    "test": "bun test",
+    "test:types": "tstyche",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "lint:fix": "eslint . --fix && prettier --write .",
+    "format": "prettier --write .",
+    "changeset": "bunx changeset",
+    "ci:version": "bunx changeset version",
+    "ci:publish": "bun run build && bun publish --tolerate-republish && bunx changeset tag",
+    "ci:canary": "bunx changeset version --snapshot canary && bun run build && bun publish --tag canary --tolerate-republish"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

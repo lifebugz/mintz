@@ -1,0 +1,20 @@
+# Local development preload that registers the mintz plugin during
+# `bun test` and `bun run`. Production users do this themselves.
+
+# Once the engine works, uncomment to dogfood:
+# preload = ["./scripts/dev-preload.ts"]
+
+[install]
+saveTextLockfile = true
+
+# Coverage runs on every `bun test`. CI tightens the threshold further
+# and fails the build on regression (see .github/workflows/ci.yml).
+[test]
+coverage = false           # opt-in via --coverage; keeps default `bun test` fast
+coverageThreshold = { line = 0.90, function = 0.90, statement = 0.90 }
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = [
+  "test/fixtures/**",
+  "examples/**",
+  "dist/**",
+]

@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Only one release run at a time per branch — prevents two concurrent
+# pushes from racing to open conflicting Version PRs.
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag + GitHub Release
+      pull-requests: write # open/update Version PR
+      id-token: write # reserved for future npm provenance support
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > "$HOME/.npmrc"
+
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun test
+      # `bun run test:types` is intentionally omitted; type-test files
+      # do not exist yet (see commit 30d1cec). Re-add when type tests
+      # land (Task 28 of the original mintz implementation plan).
+
+      - uses: changesets/action@v1
+        with:
+          version: bun run ci:version
+          publish: bun run ci:publish
+          commit: "chore: release"
+          title: "chore: release"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
