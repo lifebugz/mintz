@@ -162,7 +162,7 @@ import { mint } from "mintz"; // named
 **Out of scope for v0.1:** open types (`string`, `number`, `any`, `unknown`),
 unresolved generic parameters at the call site, and types that widen to a
 non-literal union. These produce a build-time error with a suggested fix rather
-than a TypeScript type error. Non-`Lit` types (objects, arrays, classes) are
+than a TypeScript type error. Non-literal types (objects, arrays, classes) are
 caught at type-check time with a normal red squiggle.
 
 Output is sorted deterministically on every run — strings by UTF-16 code-unit
