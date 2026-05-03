@@ -1,5 +1,5 @@
 {
-  "name": "mintz",
+  "name": "@mintz/core",
   "version": "0.1.0",
   "description": "Read your TypeScript types at runtime. Bun-native. Zero magic at the call site.",
   "license": "MIT",
