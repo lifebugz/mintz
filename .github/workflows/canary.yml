@@ -23,6 +23,11 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # Bootstrap auth: NPM_TOKEN-based .npmrc until trusted publishing is
+      # configured for `mintz` on npmjs.com. Remove after migration.
+      - name: Configure npm auth (transitional)
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > "$HOME/.npmrc"
+
       - run: bun install --frozen-lockfile
       - run: bun test
       # `bun run test:types` is intentionally omitted; type-test files
