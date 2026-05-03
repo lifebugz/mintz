@@ -14,7 +14,7 @@ the part you actually wanted.
 ## Quick example
 
 ```ts
-import mint from "mintz";
+import mint from "@mintz/core";
 
 const colors = mint<"red" | "green" | "blue">();
 // → ['blue', 'green', 'red']
@@ -23,7 +23,7 @@ const colors = mint<"red" | "green" | "blue">();
 A more useful case: pulling the discriminator out of a discriminated union.
 
 ```ts
-import mint from "mintz";
+import mint from "@mintz/core";
 
 type ClientToServerEvent =
   | { event: "lobby.reaction"; emoji: string }
@@ -41,7 +41,7 @@ array.
 ## Install
 
 ```sh
-bun add mintz
+bun add @mintz/core
 ```
 
 You also need `typescript >= 5.4` as a peer dep.
@@ -55,7 +55,7 @@ Create a preload file that registers the plugin:
 ```ts
 // preload.ts
 import { plugin } from "bun";
-import mintz from "mintz/bun";
+import mintz from "@mintz/core/bun";
 plugin(mintz());
 ```
 
@@ -75,7 +75,7 @@ the type, and you don't commit anything generated.
 
 ```ts
 // build.ts
-import mintz from "mintz/bun";
+import mintz from "@mintz/core/bun";
 await Bun.build({
   entrypoints: ["./src/app.ts"],
   outdir: "./dist",
@@ -152,8 +152,8 @@ mint<Exclude<Color, "deprecated">>();
 Both import shapes work:
 
 ```ts
-import mint from "mintz"; // default
-import { mint } from "mintz"; // named
+import mint from "@mintz/core"; // default
+import { mint } from "@mintz/core"; // named
 ```
 
 What's out of scope for v0.1: open types (`string`, `number`, `any`,
