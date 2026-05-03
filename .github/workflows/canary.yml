@@ -28,7 +28,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bun test
-      - run: bun run test:types
+      # `bun run test:types` is intentionally omitted; type-test files
+      # do not exist yet (see commit 30d1cec). Re-add when type tests
+      # land (Task 28 of the original mintz implementation plan).
 
       - name: Publish snapshot
         run: |
