@@ -4,6 +4,14 @@
   "description": "Read your TypeScript types at runtime. Bun-native. Zero magic at the call site.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lifebugz/mintz.git"
+  },
+  "homepage": "https://github.com/lifebugz/mintz#readme",
+  "bugs": {
+    "url": "https://github.com/lifebugz/mintz/issues"
+  },
   "exports": {
     ".": {
       "types": "./dist/runtime.d.ts",

@@ -22,14 +22,6 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      # Bootstrap auth: NPM_TOKEN-based .npmrc until trusted publishing is
-      # configured for `mintz` on npmjs.com (npm requires the package to
-      # exist before trusted publishing can be set up). After v0.1.0 is
-      # published and trusted publishing is configured, this step + the
-      # NPM_TOKEN env below + the secret can be removed.
-      - name: Configure npm auth (transitional)
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > "$HOME/.npmrc"
-
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
@@ -46,8 +38,3 @@ jobs:
           title: "chore: release"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # changesets/action checks process.env.NPM_TOKEN to decide between
-          # token-mode and OIDC-mode. With both this env and id-token: write
-          # set, the action prefers OIDC; falls through to token if OIDC
-          # fails. Remove after trusted publishing is configured for `mintz`.
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
