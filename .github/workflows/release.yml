@@ -12,9 +12,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write          # tag + GitHub Release
-      pull-requests: write     # open/update Version PR
-      id-token: write          # reserved for future npm provenance support
+      contents: write # tag + GitHub Release
+      pull-requests: write # open/update Version PR
+      id-token: write # reserved for future npm provenance support
     steps:
       - uses: actions/checkout@v6
         with:
