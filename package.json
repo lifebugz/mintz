@@ -22,9 +22,6 @@
     "README.md",
     "LICENSE"
   ],
-  "workspaces": [
-    "examples/*"
-  ],
   "engines": {
     "node": ">=20"
   },
