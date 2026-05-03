@@ -33,4 +33,4 @@ jobs:
         run: |
           bunx changeset version --snapshot ${{ inputs.tag }}
           bun run build
-          bunx npm publish --tag ${{ inputs.tag }} --provenance
+          bunx npm@latest publish --tag ${{ inputs.tag }} --provenance
