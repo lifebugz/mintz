@@ -1,0 +1,39 @@
+name: Canary Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "dist-tag for this canary"
+        default: "canary"
+        required: true
+
+concurrency: ${{ github.workflow }}
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > "$HOME/.npmrc"
+
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run test:types
+
+      - name: Publish snapshot
+        run: |
+          bunx changeset version --snapshot ${{ inputs.tag }}
+          bun run build
+          bun publish --tag ${{ inputs.tag }} --tolerate-republish
+        env:
+          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
